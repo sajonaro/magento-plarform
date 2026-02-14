@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: magento-svc
+  labels:
+    app: magento
+spec:
+  type: ClusterIP
+  selector:
+    component: web
+    color: blue  # Traffic switch: change to 'green' to switch deployments
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: magento-svc-blue
+  labels:
+    app: magento
+spec:
+  type: ClusterIP
+  selector:
+    component: web
+    color: blue
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: magento-svc-green
+  labels:
+    app: magento
+spec:
+  type: ClusterIP
+  selector:
+    component: web
+    color: green
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: magento
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/magento-irsa-role  # Overridden by overlay

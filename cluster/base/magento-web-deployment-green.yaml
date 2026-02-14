@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magento-web-green
+  labels:
+    component: web
+    color: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: web
+      color: green
+  template:
+    metadata:
+      labels:
+        component: web
+        color: green
+    spec:
+      serviceAccountName: magento
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: magento-code
+          mountPath: /var/www/html
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health_check.php
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health_check.php
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+      - name: php-fpm
+        image: magento:latest  # Overridden by Kustomize overlay
+        command: ["php-fpm"]
+        ports:
+        - containerPort: 9000
+          name: php-fpm
+        env:
+        - name: PHP_MEMORY_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: magento-config
+              key: php_memory_limit
+        - name: MAGENTO_RUN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: magento-config
+              key: magento_run_mode
+        volumeMounts:
+        - name: magento-code
+          mountPath: /var/www/html
+        - name: php-config
+          mountPath: /usr/local/etc/php/conf.d/custom.ini
+          subPath: php.ini
+        envFrom:
+        - secretRef:
+            name: magento-db-credentials
+        - secretRef:
+            name: magento-redis-credentials
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+      - name: php-config
+        configMap:
+          name: php-config
+      - name: magento-code
+        emptyDir: {}
+      
+      initContainers:
+      - name: copy-code
+        image: magento:latest  # Overridden by Kustomize overlay
+        command: ['sh', '-c', 'cp -r /app/* /var/www/html/']
+        volumeMounts:
+        - name: magento-code
+          mountPath: /var/www/html

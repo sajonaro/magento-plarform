@@ -1,0 +1,31 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: magento-web-blue-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: web
+      color: blue
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: magento-web-green-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: web
+      color: green
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: magento-consumer-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: consumer

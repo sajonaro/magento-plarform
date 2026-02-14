@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magento-cron
+  labels:
+    component: cron
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: cron
+  template:
+    metadata:
+      labels:
+        component: cron
+    spec:
+      serviceAccountName: magento
+      containers:
+      - name: cron
+        image: magento:latest  # Overridden by Kustomize overlay
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            while true; do
+              php /var/www/html/bin/magento cron:run
+              sleep 60
+            done
+        env:
+        - name: PHP_MEMORY_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: magento-config
+              key: php_memory_limit
+        - name: MAGENTO_RUN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: magento-config
+              key: magento_run_mode
+        volumeMounts:
+        - name: magento-code
+          mountPath: /var/www/html
+        - name: php-config
+          mountPath: /usr/local/etc/php/conf.d/custom.ini
+          subPath: php.ini
+        envFrom:
+        - secretRef:
+            name: magento-db-credentials
+        - secretRef:
+            name: magento-redis-credentials
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      
+      volumes:
+      - name: php-config
+        configMap:
+          name: php-config
+      - name: magento-code
+        emptyDir: {}
+      
+      initContainers:
+      - name: copy-code
+        image: magento:latest  # Overridden by Kustomize overlay
+        command: ['sh', '-c', 'cp -r /app/* /var/www/html/']
+        volumeMounts:
+        - name: magento-code
+          mountPath: /var/www/html

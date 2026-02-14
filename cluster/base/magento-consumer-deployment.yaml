@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magento-consumer
+  labels:
+    component: consumer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: consumer
+  template:
+    metadata:
+      labels:
+        component: consumer
+    spec:
+      serviceAccountName: magento
+      containers:
+      - name: consumer
+        image: magento:latest  # Overridden by Kustomize overlay
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            php /var/www/html/bin/magento queue:consumers:start async.operations.all --max-messages=10000
+        env:
+        - name: PHP_MEMORY_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: magento-config
+              key: php_memory_limit
+        - name: MAGENTO_RUN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: magento-config
+              key: magento_run_mode
+        volumeMounts:
+        - name: magento-code
+          mountPath: /var/www/html
+        - name: php-config
+          mountPath: /usr/local/etc/php/conf.d/custom.ini
+          subPath: php.ini
+        envFrom:
+        - secretRef:
+            name: magento-db-credentials
+        - secretRef:
+            name: magento-redis-credentials
+        - secretRef:
+            name: magento-sqs-credentials
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - pgrep
+            - php
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pgrep
+            - php
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      
+      volumes:
+      - name: php-config
+        configMap:
+          name: php-config
+      - name: magento-code
+        emptyDir: {}
+      
+      initContainers:
+      - name: copy-code
+        image: magento:latest  # Overridden by Kustomize overlay
+        command: ['sh', '-c', 'cp -r /app/* /var/www/html/']
+        volumeMounts:
+        - name: magento-code
+          mountPath: /var/www/html
