@@ -1,0 +1,28 @@
+# Kubernetes generated files
+kubeconfig/*.yaml
+kubeconfig/*.bak
+
+# LocalStack persistent data
+localstack-data/
+
+# K3s data (if accidentally created locally)
+k3s-server/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.log
+
+# Environment files (if any secrets added)
+.env
+.env.local
