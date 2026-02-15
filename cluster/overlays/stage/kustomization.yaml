@@ -8,8 +8,8 @@ resources:
 
 images:
   - name: magento
-    newName: 123456789.dkr.ecr.eu-west-1.amazonaws.com/magento
-    newTag: latest  # Updated by CI pipeline
+    newName: magento-hello-world
+    newTag: latest
 
 patches:
   - target:
@@ -18,13 +18,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 2
-      - op: replace
-        path: /spec/template/spec/containers/1/resources/limits/memory
-        value: "1Gi"
-      - op: replace
-        path: /spec/template/spec/containers/1/resources/requests/memory
-        value: "512Mi"
+        value: 1
 
   - target:
       kind: Deployment
@@ -32,13 +26,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 2
-      - op: replace
-        path: /spec/template/spec/containers/1/resources/limits/memory
-        value: "1Gi"
-      - op: replace
-        path: /spec/template/spec/containers/1/resources/requests/memory
-        value: "512Mi"
+        value: 1
 
   - target:
       kind: ServiceAccount
@@ -55,5 +43,5 @@ configMapGenerator:
       - MAGENTO_BACKEND_FRONTNAME=admin
       - AWS_S3_BUCKET=magento-media-stage
       - AWS_REGION=eu-west-1
-      - AWS_S3_ENDPOINT=http://localstack:4566  # For local dev with LocalStack
+      - AWS_S3_ENDPOINT=http://localstack:4566
       - AWS_SQS_ENDPOINT=http://localstack:4566

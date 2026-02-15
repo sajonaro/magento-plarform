@@ -1,0 +1,10 @@
+# This file will be automatically applied by K3s on startup
+# Place ArgoCD installation here to ensure it's always present after cluster restart
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+---
+# Note: Due to size, we'll create a script to install ArgoCD
+# K3s automatically applies manifests in /var/lib/rancher/k3s/server/manifests/
