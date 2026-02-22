@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magento-php-fpm-blue
+  labels:
+    component: php-fpm
+    color: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: php-fpm
+      color: blue
+  template:
+    metadata:
+      labels:
+        component: php-fpm
+        color: blue
+    spec:
+      serviceAccountName: magento
+      containers:
+      - name: php-fpm
+        image: magento-php-fpm:latest  # Overridden by Kustomize overlay
+        ports:
+        - containerPort: 9000
+          name: fastcgi
+        volumeMounts:
+        - name: app-files
+          mountPath: /app
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: app-files
+        persistentVolumeClaim:
+          claimName: magento-shared-storage

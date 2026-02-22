@@ -1,0 +1,43 @@
+---
+# Local development PersistentVolume using HostPath
+# This simulates ReadWriteMany behavior for multi-pod file sharing
+# For production, replace with EFS-backed PVC (see cluster/base/magento-storage-prod.yaml.example)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: magento-shared-pv
+  labels:
+    type: local
+    environment: dev
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany  # Multiple pods can mount simultaneously
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /tmp/magento-shared  # Local K3s directory
+    type: DirectoryOrCreate
+---
+# PersistentVolumeClaim for shared Magento files
+# Used by both nginx and PHP-FPM pods to share:
+# - pub/static/ (generated CSS/JS)
+# - pub/media/ (uploaded images)
+# - var/cache/ (application cache)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: magento-shared-storage
+  labels:
+    app: magento
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: manual
+  resources:
+    requests:
+      storage: 10Gi
+  selector:
+    matchLabels:
+      type: local

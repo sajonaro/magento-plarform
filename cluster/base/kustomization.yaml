@@ -2,11 +2,23 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  # Storage (local development - replace with magento-storage-prod.yaml for production)
+  - magento-storage-local.yaml
+  # Nginx deployments
   - magento-web-deployment-blue.yaml
   - magento-web-deployment-green.yaml
+  # PHP-FPM deployments
+  - magento-php-fpm-deployment-blue.yaml
+  - magento-php-fpm-deployment-green.yaml
+  # Worker deployments
   - magento-cron-deployment.yaml
   - magento-consumer-deployment.yaml
+  # Services
   - magento-service.yaml
+  - magento-php-fpm-service.yaml
+  # Configuration
+  - nginx-configmap.yaml
+  # Supporting resources
   - ingress.yaml
   - hpa.yaml
   - pdb.yaml

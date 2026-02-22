@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: magento-stage
+  name: magento-staging
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -11,11 +11,11 @@ spec:
   source:
     repoURL: https://github.com/sajonaro/magento-plarform.git
     targetRevision: main
-    path: cluster/overlays/stage
+    path: cluster/overlays/default
   
   destination:
     server: https://kubernetes.default.svc
-    namespace: stage
+    namespace: default  # Uses default namespace in staging cluster
   
   syncPolicy:
     automated:

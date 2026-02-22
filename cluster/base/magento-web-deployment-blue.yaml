@@ -1,45 +1,59 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: magento-web-blue
+  name: magento-nginx-blue
   labels:
-    component: web
+    component: nginx
     color: blue
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
-      component: web
+      component: nginx
       color: blue
   template:
     metadata:
       labels:
-        component: web
+        component: nginx
         color: blue
     spec:
       serviceAccountName: magento
       containers:
-      - name: app
-        image: magento:latest  # Overridden by Kustomize overlay
+      - name: nginx
+        image: nginx:1.24-alpine  # Standard nginx image, no custom build needed
         ports:
         - containerPort: 80
           name: http
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+          readOnly: true
+        - name: app-files
+          mountPath: /app
+          readOnly: true
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
+            memory: "64Mi"
+            cpu: "50m"
           limits:
-            memory: "256Mi"
-            cpu: "500m"
+            memory: "128Mi"
+            cpu: "200m"
         livenessProbe:
           httpGet:
             path: /health_check.php
             port: 80
-          initialDelaySeconds: 30
+          initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /health_check.php
             port: 80
-          initialDelaySeconds: 10
+          initialDelaySeconds: 5
           periodSeconds: 5
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: magento-nginx-config
+      - name: app-files
+        persistentVolumeClaim:
+          claimName: magento-shared-storage

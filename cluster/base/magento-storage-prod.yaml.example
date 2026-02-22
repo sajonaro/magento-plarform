@@ -1,0 +1,145 @@
+---
+# Production PersistentVolume using AWS EFS
+# This provides true ReadWriteMany across multiple availability zones
+# 
+# PREREQUISITES:
+# 1. AWS EFS filesystem created via Terraform (see terraform docs)
+# 2. EFS CSI driver installed in EKS cluster
+# 3. EFS mount targets in each AZ where EKS nodes run
+# 4. Security groups allowing NFS traffic (port 2049)
+#
+# SETUP STEPS:
+# 1. Create EFS filesystem via Terraform:
+#    - File system ID will be something like: fs-12345678
+#    - Encrypted: true
+#    - Performance mode: General Purpose (or Max I/O for high traffic)
+# 
+# 2. Install EFS CSI driver (via Terraform or Helm):
+#    helm repo add aws-efs-csi-driver https://kubernetes-sigs.github.io/aws-efs-csi-driver/
+#    helm install aws-efs-csi-driver aws-efs-csi-driver/aws-efs-csi-driver
+#
+# 3. Create StorageClass (one-time setup)
+# 4. Create PVC (below)
+# 5. Update kustomization.yaml to use this file instead of magento-storage-local.yaml
+
+---
+# StorageClass for EFS
+# Creates dynamic provisioning using EFS CSI driver
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-sc
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap  # EFS Access Point mode
+  fileSystemId: fs-XXXXXXXX  # REPLACE with your EFS file system ID from Terraform output
+  directoryPerms: "700"
+  gidRangeStart: "1000"
+  gidRangeEnd: "2000"
+  basePath: "/magento"  # EFS subdirectory for Magento files
+mountOptions:
+  - tls  # Use encryption in transit
+  - iam  # Use IAM for authentication
+
+---
+# PersistentVolumeClaim for production Magento files
+# This PVC will be dynamically provisioned by EFS CSI driver
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: magento-shared-storage
+  labels:
+    app: magento
+    environment: production
+spec:
+  accessModes:
+    - ReadWriteMany  # Multiple pods across multiple AZs can mount
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 100Gi  # Soft limit (EFS is elastic, actual usage billed)
+
+---
+# ALTERNATIVE: Static Provisioning (if you prefer manual EFS management)
+# Uncomment below if you want to manually manage EFS instead of dynamic provisioning
+
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: magento-efs-pv
+# spec:
+#   capacity:
+#     storage: 100Gi
+#   volumeMode: Filesystem
+#   accessModes:
+#     - ReadWriteMany
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: efs-sc
+#   csi:
+#     driver: efs.csi.aws.com
+#     volumeHandle: fs-XXXXXXXX  # Your EFS filesystem ID
+#     volumeAttributes:
+#       path: /magento
+# ---
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: magento-shared-storage
+# spec:
+#   accessModes:
+#     - ReadWriteMany
+#   storageClassName: efs-sc
+#   resources:
+#     requests:
+#       storage: 100Gi
+
+---
+# PRODUCTION NOTES:
+#
+# 1. COST:
+#    - EFS Standard: ~$0.30/GB/month
+#    - 100GB Magento deployment: ~$30/month
+#    - Infrequent Access (IA): ~$0.025/GB/month (for old media files)
+#
+# 2. PERFORMANCE:
+#    - General Purpose: Up to 7,000 file operations/sec
+#    - Max I/O: >7,000 ops/sec (for high traffic sites)
+#    - Throughput Mode: Bursting (default) or Provisioned (for consistent high throughput)
+#
+# 3. BACKUP:
+#    - Enable AWS Backup for EFS
+#    - Daily snapshots with 30-day retention
+#    - Cross-region replication for DR
+#
+# 4. LIFECYCLE MANAGEMENT:
+#    - Move files to Infrequent Access tier after 30 days
+#    - Saves ~90% on storage costs for old media files
+#
+# 5. MONITORING:
+#    - CloudWatch metrics: BurstCreditBalance, PercentIOLimit
+#    - Alert if burst credits drop below 1 trillion (indicates need for Provisioned Throughput)
+#
+# 6. SECURITY:
+#    - Encryption in transit: TLS (mountOptions above)
+#    - Encryption at rest: KMS key (set in Terraform)
+#    - IAM authentication: Prevents unauthorized mounts
+#    - VPC endpoints: Keep traffic private (no internet)
+#
+# 7. MULTI-AZ AVAILABILITY:
+#    - EFS automatically replicates across all AZs in region
+#    - Pods in any AZ can mount the same filesystem
+#    - No single point of failure
+#
+# 8. TERRAFORM INTEGRATION:
+#    - Output EFS filesystem ID from Terraform
+#    - Use sed or kustomize to replace fs-XXXXXXXX with actual ID
+#    - Example: kustomize edit set annotation efs-id:$EFS_FILESYSTEM_ID
+
+# TO ACTIVATE FOR PRODUCTION:
+# 1. Copy this file to magento-storage-prod.yaml
+# 2. Replace fs-XXXXXXXX with your actual EFS filesystem ID
+# 3. Update cluster/overlays/prod/kustomization.yaml:
+#    resources:
+#      - ../../base
+#    patchesStrategicMerge:
+#      - storage-prod-patch.yaml  # Override local storage with EFS

@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No namespace specified - uses 'default' or whatever the cluster context sets
+# Staging vs Production is differentiated by which cluster you deploy to,
+# not by namespace within the same cluster
+
+resources:
+  - ../../base
+
+images:
+  - name: magento-php-fpm
+    newName: registry.gitlab.com/flowers-ua/magento-platform/php-fpm
+    newTag: latest
+
+patches:
+  - target:
+      kind: Deployment
+      name: magento-web-blue
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+
+  - target:
+      kind: Deployment
+      name: magento-web-green
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2

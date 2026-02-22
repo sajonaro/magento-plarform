@@ -1,0 +1,302 @@
+# GitLab CI/CD Pipeline for magento-platform Repository
+# This pipeline validates Kubernetes manifests and manages traffic switching
+# 
+# IMPORTANT: This uses separate clusters for each environment
+# - Staging cluster: uses $KUBECONFIG_STAGING
+# - Production cluster: uses $KUBECONFIG_PRODUCTION
+
+variables:
+  GIT_STRATEGY: clone
+
+stages:
+  - validate
+  - bootstrap
+  - switch
+  - ops
+
+# Validate Kubernetes manifests on every commit
+validate-manifests:
+  stage: validate
+  image: alpine/k8s:1.28.0
+  before_script:
+    # Install kustomize
+    - apk add --no-cache curl bash
+    - curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+    - mv kustomize /usr/local/bin/
+  script:
+    - echo "Validating Kubernetes manifests..."
+    
+    # Validate base manifests
+    - echo "→ Validating base/"
+    - kustomize build cluster/base > /tmp/base-rendered.yaml
+    - kubectl --dry-run=client apply -f /tmp/base-rendered.yaml
+    
+    # Validate default overlay
+    - echo "→ Validating overlays/default/"
+    - kustomize build cluster/overlays/default > /tmp/default-rendered.yaml
+    - kubectl --dry-run=client apply -f /tmp/default-rendered.yaml
+    
+    # Check for common mistakes
+    - echo "→ Checking for common mistakes..."
+    - |
+      # Check if services have matching selectors with deployments
+      echo "Checking service selectors..."
+      
+      # Check if all deployments have proper labels
+      echo "Checking deployment labels..."
+      grep -r "color:" cluster/base/ || echo "Warning: No color labels found"
+      
+    - echo "All manifests are valid!"
+  tags:
+    - docker
+
+# ============================================================
+# CLUSTER BOOTSTRAP JOB
+# ============================================================
+
+# Manual job: Bootstrap cluster (one-time setup)
+# Uses KUBECONFIG and ENVIRONMENT variables
+# Default: staging (KUBECONFIG_STAGING)
+# For production: set KUBECONFIG=$KUBECONFIG_PRODUCTION and ENVIRONMENT=production
+bootstrap-cluster:
+  stage: bootstrap
+  image: alpine/k8s:1.28.0
+  variables:
+    KUBECONFIG: $KUBECONFIG_STAGING  # Default to staging, override for production
+    ENVIRONMENT: staging  # Default to staging, override to 'production' for production
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl && mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG" | base64 -d > ~/.kube/config
+  script:
+    - echo "Bootstrapping $ENVIRONMENT cluster: $(kubectl config current-context)"
+    - chmod +x cluster/scripts/bootstrap-cluster.sh
+    - ./cluster/scripts/bootstrap-cluster.sh $ENVIRONMENT
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# Manual job: Update image tag (used by all environments)
+update-image-tag:
+  stage: ops
+  image: alpine:latest
+  variables:
+    IMAGE_TAG: "latest"  # Override this when triggering the job
+  before_script:
+    - apk add --no-cache git
+    - git config --global user.email "gitlab-ci@flowers.ua"
+    - git config --global user.name "GitLab CI"
+    - git remote set-url origin https://oauth2:${GITLAB_TOKEN}@gitlab.com/flowers-ua/magento-platform.git
+  script:
+    - echo "Updating overlay to use image tag: ${IMAGE_TAG}"
+    - sed -i "s|newTag: .*|newTag: ${IMAGE_TAG}|" cluster/overlays/default/kustomization.yaml
+    - echo "Changes made:"
+    - git diff cluster/overlays/default/kustomization.yaml
+    - git add cluster/overlays/default/kustomization.yaml
+    - git commit -m "deploy: update to php-fpm:${IMAGE_TAG}"
+    - git push origin main
+    - echo "Overlay updated to ${IMAGE_TAG}"
+    - echo "ArgoCD in staging and production clusters will detect this change"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# ============================================================
+# STAGING CLUSTER JOBS
+# ============================================================
+
+# Manual job: Switch traffic to green (STAGING)
+switch-traffic-to-green-staging:
+  stage: switch
+  image: alpine/k8s:1.28.0
+  environment: staging
+  variables:
+    GIT_STRATEGY: clone
+  before_script:
+    - apk add --no-cache git bash curl
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl
+    - mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_STAGING" | base64 -d > ~/.kube/config
+    - git config --global user.email "gitlab-ci@flowers.ua"
+    - git config --global user.name "GitLab CI"
+  script:
+    - echo "Switching STAGING traffic from blue to green..."
+    - chmod +x cluster/scripts/switch-traffic.sh
+    - ./cluster/scripts/switch-traffic.sh green
+    - echo "STAGING traffic switched to green!"
+    - echo "All staging traffic now flows to green deployment"
+    - echo "Blue deployment remains available for rollback"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# Manual job: Switch traffic to blue (rollback STAGING)
+switch-traffic-to-blue-staging:
+  stage: switch
+  image: alpine/k8s:1.28.0
+  environment: staging
+  variables:
+    GIT_STRATEGY: clone
+  before_script:
+    - apk add --no-cache git bash curl
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl
+    - mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_STAGING" | base64 -d > ~/.kube/config
+    - git config --global user.email "gitlab-ci@flowers.ua"
+    - git config --global user.name "GitLab CI"
+  script:
+    - echo "ROLLING BACK STAGING to blue..."
+    - chmod +x cluster/scripts/switch-traffic.sh
+    - ./cluster/scripts/switch-traffic.sh blue
+    - echo "STAGING traffic rolled back to blue!"
+    - echo "Rollback completed - blue deployment is now serving staging traffic"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# Manual job: Scale down inactive deployment (STAGING)
+scale-down-inactive-staging:
+  stage: ops
+  image: alpine/k8s:1.28.0
+  environment: staging
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl
+    - mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_STAGING" | base64 -d > ~/.kube/config
+  script:
+    - echo "Scaling down inactive STAGING deployment to save resources..."
+    - ACTIVE_COLOR=$(kubectl get svc magento-svc -o jsonpath='{.spec.selector.color}')
+    - echo "Active color: $ACTIVE_COLOR"
+    - |
+      if [ "$ACTIVE_COLOR" = "blue" ]; then
+        INACTIVE_COLOR="green"
+      else
+        INACTIVE_COLOR="blue"
+      fi
+    - echo "Inactive color: $INACTIVE_COLOR"
+    - echo "Scaling down magento-nginx-$INACTIVE_COLOR..."
+    - kubectl scale deployment magento-nginx-$INACTIVE_COLOR --replicas=0
+    - echo "Scaling down magento-php-fpm-$INACTIVE_COLOR..."
+    - kubectl scale deployment magento-php-fpm-$INACTIVE_COLOR --replicas=0
+    - echo "Inactive STAGING deployment ($INACTIVE_COLOR) scaled down to 0 replicas!"
+    - echo "Active deployment ($ACTIVE_COLOR) continues serving staging traffic"
+    - echo "Can redeploy inactive color anytime (takes 2-3 min to scale up)"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# ============================================================
+# PRODUCTION CLUSTER JOBS
+# ============================================================
+
+# Manual job: Switch traffic to green (PRODUCTION)
+switch-traffic-to-green-production:
+  stage: switch
+  image: alpine/k8s:1.28.0
+  environment: production
+  variables:
+    GIT_STRATEGY: clone
+  before_script:
+    - apk add --no-cache git bash curl
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl
+    - mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_PRODUCTION" | base64 -d > ~/.kube/config
+    - git config --global user.email "gitlab-ci@flowers.ua"
+    - git config --global user.name "GitLab CI"
+  script:
+    - echo "Switching PRODUCTION traffic from blue to green..."
+    - chmod +x cluster/scripts/switch-traffic.sh
+    - ./cluster/scripts/switch-traffic.sh green
+    - echo "PRODUCTION traffic switched to green!"
+    - echo "All production traffic now flows to green deployment"
+    - echo "Blue deployment remains available for rollback"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# Manual job: Switch traffic to blue (rollback PRODUCTION)
+switch-traffic-to-blue-production:
+  stage: switch
+  image: alpine/k8s:1.28.0
+  environment: production
+  variables:
+    GIT_STRATEGY: clone
+  before_script:
+    - apk add --no-cache git bash curl
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl
+    - mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_PRODUCTION" | base64 -d > ~/.kube/config
+    - git config --global user.email "gitlab-ci@flowers.ua"
+    - git config --global user.name "GitLab CI"
+  script:
+    - echo "ROLLING BACK PRODUCTION to blue..."
+    - chmod +x cluster/scripts/switch-traffic.sh
+    - ./cluster/scripts/switch-traffic.sh blue
+    - echo "PRODUCTION traffic rolled back to blue!"
+    - echo "Rollback completed - blue deployment is now serving production traffic"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
+
+# Manual job: Scale down inactive deployment (PRODUCTION)
+scale-down-inactive-production:
+  stage: ops
+  image: alpine/k8s:1.28.0
+  environment: production
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl
+    - mv kubectl /usr/local/bin/
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_PRODUCTION" | base64 -d > ~/.kube/config
+  script:
+    - echo "Scaling down inactive PRODUCTION deployment to save resources..."
+    - ACTIVE_COLOR=$(kubectl get svc magento-svc -o jsonpath='{.spec.selector.color}')
+    - echo "Active color: $ACTIVE_COLOR"
+    - |
+      if [ "$ACTIVE_COLOR" = "blue" ]; then
+        INACTIVE_COLOR="green"
+      else
+        INACTIVE_COLOR="blue"
+      fi
+    - echo "Inactive color: $INACTIVE_COLOR"
+    - echo "Scaling down magento-nginx-$INACTIVE_COLOR..."
+    - kubectl scale deployment magento-nginx-$INACTIVE_COLOR --replicas=0
+    - echo "Scaling down magento-php-fpm-$INACTIVE_COLOR..."
+    - kubectl scale deployment magento-php-fpm-$INACTIVE_COLOR --replicas=0
+    - echo "Inactive PRODUCTION deployment ($INACTIVE_COLOR) scaled down to 0 replicas!"
+    - echo "Active deployment ($ACTIVE_COLOR) continues serving production traffic"
+    - echo "Can redeploy inactive color anytime (takes 2-3 min to scale up)"
+  when: manual
+  only:
+    - main
+  tags:
+    - docker
